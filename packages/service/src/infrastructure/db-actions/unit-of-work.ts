@@ -1,4 +1,7 @@
-import type { PrismaClient } from '@prisma/client';
+// Minimal Prisma client shape used by UnitOfWork. Consumers pass their generated PrismaClient.
+type PrismaClient = {
+  $transaction<T>(fn: (tx: unknown) => Promise<T>): Promise<T>;
+};
 import { dbSuccess, dbFailure, type DbResult } from './db-result';
 
 export class UnitOfWork {

@@ -5,7 +5,7 @@ describe('UnitOfWork', () => {
   function makePrisma(transactionImpl?: (fn: (tx: unknown) => Promise<void>) => Promise<void>) {
     return {
       $transaction: vi.fn().mockImplementation(transactionImpl ?? ((fn: (tx: unknown) => Promise<void>) => fn({}))),
-    } as unknown as import('@prisma/client').PrismaClient;
+    } as unknown as { $transaction: (fn: (tx: unknown) => Promise<void>) => Promise<void> };
   }
 
   it('saveAsync_noOps_returnsSuccess', async () => {
