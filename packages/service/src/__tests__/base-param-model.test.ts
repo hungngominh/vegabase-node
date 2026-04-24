@@ -5,12 +5,12 @@ import type { BaseParamModel } from '../models/base-param-model';
 describe('hasField', () => {
   const base: BaseParamModel = { callerUsername: 'user', callerRoles: ['ADMIN'] };
 
-  it('hasField_noUpdatedFields_returnsTrue', () => {
-    expect(hasField(base, 'name')).toBe(true);
+  it('hasField_noUpdatedFields_returnsFalse', () => {
+    expect(hasField(base, 'name')).toBe(false);
   });
 
-  it('hasField_emptyUpdatedFields_returnsTrue', () => {
-    expect(hasField({ ...base, updatedFields: [] }, 'name')).toBe(true);
+  it('hasField_emptyUpdatedFields_returnsFalse', () => {
+    expect(hasField({ ...base, updatedFields: [] }, 'name')).toBe(false);
   });
 
   it('hasField_fieldInList_returnsTrue', () => {

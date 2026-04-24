@@ -113,13 +113,16 @@ PHẢI dùng tagged template (`` $queryRaw`...` ``), không string concat — tr
 
 ---
 
-## DB-06 — Filter `isDeleted` trong `applyFilter` (qua super)
+## DB-06 — Filter `isDeleted` khi dùng `queryAsync` trực tiếp
+
+`BaseService` tự động thêm `isDeleted: false` qua `applyFilter` cho `getList`. Override `applyFilter` chỉ cần thêm filter nghiệp vụ — không cần lặp lại `isDeleted`:
 
 ```ts
-// ✅ Đúng
+// ✅ Đúng: base đã có isDeleted: false, chỉ thêm filter của mình
 protected applyFilter(where: Record<string, unknown>, p: UserParam) {
   const base = super.applyFilter(where, p);   // { isDeleted: false }
-  return { ...base, ...customFilter };
+  if (p.keyword) return { ...base, name: { contains: p.keyword } };
+  return base;
 }
 
 // ❌ Sai — bỏ qua super
@@ -128,13 +131,13 @@ protected applyFilter(where: Record<string, unknown>, p: UserParam) {
 }
 ```
 
-Cũng áp dụng khi query trong `checkAddCondition` (check duplicate):
+**Khi gọi `executor.queryAsync()` trực tiếp** (trong `checkAddCondition`, custom logic), base không thể tự thêm filter — phải tự thêm `isDeleted: false`:
 
 ```ts
-// ✅ Đúng
+// ✅ Đúng — gọi trực tiếp trong checkAddCondition
 const existing = await this.executor.queryAsync(this.delegate, { email: p.email, isDeleted: false });
 
-// ❌ Sai — check trùng cả với record đã xóa → cho phép tạo email đã từng tồn tại
+// ❌ Sai — quên isDeleted → check trùng cả với record đã xóa → cho phép tạo lại email đã từng tồn tại
 const existing = await this.executor.queryAsync(this.delegate, { email: p.email });
 ```
 

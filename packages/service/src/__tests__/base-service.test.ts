@@ -27,9 +27,11 @@ class TestUserService extends BaseService<UserEntity, UserParam> {
     super(executor, permissions);
     this.delegate = {
       create: vi.fn(),
+      createMany: vi.fn(),
       update: vi.fn(),
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
       count: vi.fn(),
     };
   }
@@ -42,6 +44,7 @@ class TestUserService extends BaseService<UserEntity, UserParam> {
 function makeExecutor(): DbActionExecutor {
   return {
     addAsync: vi.fn(),
+    addRangeAsync: vi.fn(),
     updateAsync: vi.fn(),
     softDeleteAsync: vi.fn(),
     queryAsync: vi.fn(),
@@ -137,6 +140,22 @@ describe('BaseService.delete', () => {
 
     expect(result.ok).toBe(true);
     expect(executor.softDeleteAsync).toHaveBeenCalledOnce();
+  });
+
+  it('checkDeleteCondition_addsError_deleteAborted', async () => {
+    class RestrictedService extends TestUserService {
+      protected override async checkDeleteCondition(_param: UserParam, errors: Errors): Promise<void> {
+        errors.add('VALIDATION', 'Cannot delete active record', 'id');
+      }
+    }
+    const executor = makeExecutor();
+    vi.mocked(executor.getByIdAsync).mockResolvedValue(dbSuccess(makeEntity(), 5));
+    const svc = new RestrictedService(executor, makePermissions());
+
+    const result = await svc.delete(makeParam({ id: 'eid' }));
+
+    expect(result.ok).toBe(false);
+    expect(executor.softDeleteAsync).not.toHaveBeenCalled();
   });
 });
 

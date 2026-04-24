@@ -67,4 +67,43 @@ describe('CacheStore', () => {
     expect(itemLoader).toHaveBeenCalledTimes(2);
     expect(allLoader).toHaveBeenCalledTimes(2);
   });
+
+  it('invalidate_singleKey_doesNotClearAllEntry', async () => {
+    const store = new CacheStore<string, string>();
+    const allLoader = vi.fn().mockResolvedValue(['a', 'b']);
+    await store.getAll(allLoader);
+    store.invalidate('a');
+
+    await store.getAll(allLoader);
+
+    expect(allLoader).toHaveBeenCalledOnce();
+  });
+
+  it('getAll_loaderFailure_preservesStalSnapshot', async () => {
+    const store = new CacheStore<string, string>({ ttlMs: 1 });
+    const allLoader = vi.fn().mockResolvedValue(['stale']);
+    await store.getAll(allLoader);
+
+    await new Promise(r => setTimeout(r, 5));
+    allLoader.mockRejectedValueOnce(new Error('network error'));
+
+    const result = await store.getAll(allLoader);
+
+    expect(result).toEqual(['stale']);
+  });
+
+  it('getItem_concurrentRequests_loaderCalledOnce', async () => {
+    const store = new CacheStore<string, string>();
+    let resolve!: (v: string) => void;
+    const loader = vi.fn().mockReturnValue(new Promise<string>(r => { resolve = r; }));
+
+    const [r1, r2] = await Promise.all([
+      (async () => { const p = store.getItem('k', loader); resolve('v'); return p; })(),
+      store.getItem('k', loader),
+    ]);
+
+    expect(loader).toHaveBeenCalledOnce();
+    expect(r1).toBe('v');
+    expect(r2).toBe('v');
+  });
 });

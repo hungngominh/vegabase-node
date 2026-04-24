@@ -78,8 +78,45 @@ export class DbActionExecutor {
     return this.withRetry(() => delegate.findMany({ where, ...options }));
   }
 
-  async getByIdAsync<T>(delegate: PrismaDelegate<T>, id: string): Promise<DbResult<T | null>> {
-    return this.withRetry(() => delegate.findUnique({ where: { id } }));
+  async getByIdAsync<T>(
+    delegate: PrismaDelegate<T>,
+    id: string,
+    options: { includeDeleted?: boolean } = {},
+  ): Promise<DbResult<T | null>> {
+    if (options.includeDeleted) {
+      return this.withRetry(() => delegate.findUnique({ where: { id } }));
+    }
+    return this.withRetry(() => delegate.findFirst({ where: { id, isDeleted: false } }));
+  }
+
+  async addRangeAsync<T>(
+    delegate: PrismaDelegate<T>,
+    items: Record<string, unknown>[],
+    createdBy: string,
+    chunkSize = 500,
+  ): Promise<DbResult<number>> {
+    const chunks: Record<string, unknown>[][] = [];
+    for (let i = 0; i < items.length; i += chunkSize) {
+      chunks.push(items.slice(i, i + chunkSize));
+    }
+
+    const start = Date.now();
+    let total = 0;
+    for (const chunk of chunks) {
+      const data = chunk.map(item => ({
+        ...item,
+        id: uuidv7(),
+        isDeleted: false,
+        logCreatedDate: new Date(),
+        logCreatedBy: createdBy,
+        logUpdatedDate: null,
+        logUpdatedBy: null,
+      }));
+      const result = await this.withRetry(() => delegate.createMany({ data }));
+      if (!result.isSuccess) return { isSuccess: false, error: result.error, durationMs: Date.now() - start };
+      total += (result.data as { count: number }).count;
+    }
+    return dbSuccess(total, Date.now() - start);
   }
 
   async countAsync<T>(delegate: PrismaDelegate<T>, where: Record<string, unknown>): Promise<DbResult<number>> {

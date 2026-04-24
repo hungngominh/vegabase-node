@@ -9,7 +9,7 @@ Thư viện Node.js / TypeScript nội bộ cung cấp nền tảng chuẩn cho 
 - **Audit fields tự động** (`logCreatedDate`, `logCreatedBy`, …) và **soft delete** chuẩn hoá.
 - **Authentication** JWT (`@fastify/jwt`) + password hashing Argon2id (OWASP defaults).
 - **DB executor** với retry / timeout, không lộ Prisma vào Service.
-- **Read-through cache** cho master data (`CacheStore<TKey, TModel>`).
+- **Read-through cache** cho master data (`ICacheStore<TKey, TModel>` interface + `CacheStore` implementation, single-flight, TTL, stale-preserve).
 - **Result\<T\>** pattern — Service không throw, lỗi business trả về `{ ok: false, errors }`.
 
 ## Tech Stack
