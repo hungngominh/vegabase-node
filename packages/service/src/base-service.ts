@@ -1,5 +1,5 @@
 import { ok, fail, Errors, type Result, type BaseEntity, type PagedResult } from '@vegabase/core';
-import { hasField, type BaseParamModel } from './models/base-param-model';
+import { hasField, MAX_PAGE_SIZE, type BaseParamModel } from './models/base-param-model';
 import type { DbActionExecutor } from './infrastructure/db-actions/db-action-executor';
 import type { PermissionCache } from './infrastructure/cache/permission-cache';
 import type { PrismaDelegate } from './infrastructure/db-actions/prisma-delegate';
@@ -27,8 +27,8 @@ export abstract class BaseService<TModel extends BaseEntity, TParam extends Base
     if (!allowed) return fail([{ code: 'PERMISSION_DENIED', message: 'Access denied.' }]);
 
     const where = this.applyFilter({}, param);
-    const page = param.page ?? 1;
-    const pageSize = param.pageSize ?? 20;
+    const page = Math.max(1, param.page ?? 1);
+    const pageSize = Math.min(MAX_PAGE_SIZE, Math.max(1, param.pageSize ?? 20));
 
     const [itemsResult, countResult] = await Promise.all([
       this.executor.queryAsync(this.delegate, where, {
@@ -92,6 +92,11 @@ export abstract class BaseService<TModel extends BaseEntity, TParam extends Base
       }
     }
 
+    if (Object.keys(data).length === 0) {
+      this.onChanged();
+      return ok(entity as unknown as TModel);
+    }
+
     const result = await this.executor.updateAsync(this.delegate, param.id, data, param.callerUsername);
     if (!result.isSuccess) return fail([{ code: 'DB_TIMEOUT', message: result.error.message }]);
 
@@ -109,6 +114,10 @@ export abstract class BaseService<TModel extends BaseEntity, TParam extends Base
     if (!entityResult.isSuccess) return fail([{ code: 'DB_TIMEOUT', message: entityResult.error.message }]);
     if (!entityResult.data) return fail([{ code: 'NOT_FOUND', message: 'Record not found.' }]);
 
+    const errors = new Errors();
+    await this.checkDeleteCondition(param, errors);
+    if (errors.hasErrors()) return errors.toResult();
+
     const result = await this.executor.softDeleteAsync(this.delegate, param.id, param.callerUsername);
     if (!result.isSuccess) return fail([{ code: 'DB_TIMEOUT', message: result.error.message }]);
 
@@ -122,6 +131,7 @@ export abstract class BaseService<TModel extends BaseEntity, TParam extends Base
 
   protected async checkAddCondition(_param: TParam, _errors: Errors): Promise<void> {}
   protected async checkUpdateCondition(_param: TParam, _errors: Errors): Promise<void> {}
+  protected async checkDeleteCondition(_param: TParam, _errors: Errors): Promise<void> {}
 
   protected applyUpdate(entity: TModel, param: TParam): void {
     for (const field of this.allowedUpdateFields) {

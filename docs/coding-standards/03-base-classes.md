@@ -6,9 +6,10 @@ Quy tắc extend và sử dụng `BaseService` và `createBaseController`.
 
 | Hook | Mục đích | Khi nào override |
 |---|---|---|
-| `applyFilter` | Build Prisma `where` clause | Luôn override khi có filter param (luôn `super.applyFilter` trước) |
+| `applyFilter` | Build Prisma `where` clause | Override khi có filter param; `isDeleted: false` đã được apply tự động trước hook này |
 | `checkAddCondition` | Validate trước insert | Khi có business rule cho add |
 | `checkUpdateCondition` | Validate trước update | Khi có business rule cho update |
+| `checkDeleteCondition` | Validate trước soft-delete | Khi cần chặn delete có điều kiện |
 | `applyUpdate` | Map param → entity | Khi cần custom mapping (default copy theo `allowedUpdateFields`) |
 | `onChanged` | Sau write thành công | Khi có cache cần invalidate |
 | `refineListData` | Enrich sau khi load | Khi cần join data in-memory |
@@ -139,7 +140,7 @@ protected applyUpdate(entity: User, p: UserParam) {
 }
 ```
 
-> `hasField` trả `true` khi `param.updatedFields` rỗng (case `add`), trả `true/false` theo `updatedFields.includes(field)` khi có (case `updateField`).
+> **Lưu ý (v2):** `hasField` trả `true` **chỉ khi** `field` có trong `updatedFields`. Khi `updatedFields` rỗng hoặc thiếu, `hasField` trả `false` → không field nào được update → `updateField` với body rỗng là no-op an toàn (không còn silent full-overwrite như v1). `updatedFields` được tự động populate từ JSON body qua endpoint `updateField`.
 
 ---
 
@@ -225,3 +226,28 @@ protected async refineListData(items: User[], _p: UserParam, _err: Errors) {
 ```
 
 `refineListData` được gọi SAU khi pagination — số `items` ≤ `pageSize`, nhưng N=20 vẫn là 20 query thừa.
+
+---
+
+## BC-10a — Dùng `checkDeleteCondition` để chặn delete có điều kiện
+
+```ts
+// ✅ Đúng: chặn delete nếu entity đang được tham chiếu
+protected async checkDeleteCondition(p: UserParam, errors: Errors): Promise<void> {
+  const result = await this.executor.queryAsync(this.orderDelegate, {
+    userId: p.id,
+    isDeleted: false,
+  });
+  if (result.isSuccess && result.data.length > 0) {
+    errors.add('VALIDATION', 'Không thể xóa user đang có đơn hàng chưa xử lý.', 'id');
+  }
+}
+
+// ❌ Sai: override delete() để validate — phá vỡ logic chuẩn
+async delete(p: UserParam): Promise<Result<boolean>> {
+  // check thủ công ở đây, bypass permission check hoặc quên gọi onChanged
+  return super.delete(p);
+}
+```
+
+Khi `errors.hasErrors()` là `true`, `BaseService.delete` short-circuit trả `errors.toResult()` — KHÔNG gọi `executor.softDeleteAsync`.

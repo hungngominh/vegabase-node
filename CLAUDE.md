@@ -12,7 +12,7 @@ All code — human or AI-generated — must follow these standards. **Read the r
 |------|-------|
 | [docs/coding-standards/01-naming.md](docs/coding-standards/01-naming.md) | NS-01–NS-08: Package names, file names, audit field prefix, async naming |
 | [docs/coding-standards/02-architecture.md](docs/coding-standards/02-architecture.md) | LA-01–LA-06: Layer dependency, core purity, service/api responsibilities |
-| [docs/coding-standards/03-base-classes.md](docs/coding-standards/03-base-classes.md) | BC-01–BC-10: Which hooks to override, allowedUpdateFields, refineListData |
+| [docs/coding-standards/03-base-classes.md](docs/coding-standards/03-base-classes.md) | BC-01–BC-10a: Which hooks to override, allowedUpdateFields, refineListData |
 | [docs/coding-standards/04-error-handling.md](docs/coding-standards/04-error-handling.md) | EH-01–EH-06: Errors / Result\<T\>, DbResult, no silent catches |
 | [docs/coding-standards/05-security.md](docs/coding-standards/05-security.md) | SEC-01–SEC-06: PermissionCache, Argon2id, JWT from env vars |
 | [docs/coding-standards/06-database.md](docs/coding-standards/06-database.md) | DB-01–DB-07: Soft delete, no manual audit fields, UUIDv7, UnitOfWork |
@@ -30,7 +30,7 @@ All code — human or AI-generated — must follow these standards. **Read the r
 ## Hard Rules (never break)
 
 - **Never** set `logCreatedDate`, `logCreatedBy`, `logUpdatedDate`, `logUpdatedBy` manually — `DbActionExecutor` sets these.
-- **Never** physical delete — use `executor.softDeleteAsync()`. Always include `isDeleted: false` in the where clause (the default `applyFilter` does this — call `super.applyFilter()` when overriding).
+- **Never** physical delete — use `executor.softDeleteAsync()`. `getList` auto-applies `isDeleted: false` via `applyFilter`; still add it manually in direct `executor.queryAsync()` calls (e.g. inside `checkAddCondition` for duplicate checks).
 - **Never** hardcode role strings — use `permissions.hasPermission(roleId, screenCode, action)`.
 - **Never** cache passwords, tokens, or PII.
 - **Never** swallow exceptions in Service code — return a `Result` with errors instead.
@@ -45,6 +45,7 @@ All code — human or AI-generated — must follow these standards. **Read the r
 
 - **Simplicity first** — no features beyond what was asked, no abstractions for single-use code, no speculative flexibility. If 200 lines could be 50, rewrite.
 - **Surgical changes** — don't "improve" adjacent code, comments, or formatting. Match existing style. Only remove imports/variables your changes made unused.
+- **Reuse before create** — before writing any new class, method, or utility, search the codebase for existing code that does the same or similar thing. Extend or call what exists; only create new code when there is no suitable match. If you find a near-match, state the difference and ask before duplicating.
 - **Goal-driven** — transform tasks into verifiable goals first. "Fix the bug" → reproduce with a test, then fix. For multi-step tasks, state a brief plan with a verify step per item before touching code.
 
 ## Project Architecture
@@ -81,9 +82,10 @@ Constructor takes 3 dependencies: `executor: DbActionExecutor`, `permissions: Pe
 
 | Hook | Purpose |
 |------|---------|
-| `applyFilter(where, param)` | Build Prisma `where` clause — **always call `super.applyFilter` first** to keep `isDeleted: false` |
+| `applyFilter(where, param)` | Build Prisma `where` clause — receives `where` already containing `isDeleted: false`; add column filters here. Call `super.applyFilter` first to preserve the base condition. |
 | `checkAddCondition(param, errors)` | Async business validation before insert; push errors via `errors.add(code, message, field?)` |
 | `checkUpdateCondition(param, errors)` | Async business validation before update |
+| `checkDeleteCondition(param, errors)` | Async business validation before soft-delete; push errors to abort the operation |
 | `applyUpdate(entity, param)` | Custom mapping — default copies fields listed in `allowedUpdateFields` whose key passes `hasField(param, key)` |
 | `onChanged()` | Synchronous cache invalidation, no params — exceptions are NOT caught here, so keep it side-effect-only |
 | `refineListData(items, param, errors)` | Post-load enrichment — avoid N+1 (batch via `CacheStore` or single bulk query) |
@@ -112,17 +114,19 @@ Each route:
 
 ### `BaseParamModel`
 
-All param types extend this interface. Fields: `page?`, `pageSize?`, `keyword?`, `sortBy?`, `sortDesc?`, `updatedFields?`, `callerUsername`, `callerRoles`, `id?`. Use `hasField(param, fieldName)` in `applyUpdate` to check partial updates — returns `true` when `updatedFields` is missing/empty (i.e. on `add` calls every field is "present").
+All param types extend this interface. Fields: `page?` (clamped ≥1), `pageSize?` (clamped 1–1000), `keyword?`, `sortBy?`, `sortDesc?`, `updatedFields?`, `callerUsername`, `callerRoles`, `id?`. Use `hasField(param, fieldName)` in `applyUpdate` to check partial updates — **v2 semantic: returns `false` when `updatedFields` is missing or empty** (no fields updated). Only returns `true` for fields explicitly listed. `updateField` with no `updatedFields` is a no-op (calls `onChanged()` then returns the existing entity).
 
 ## Infrastructure Quick Reference
 
 - **Single-entity writes:** `DbActionExecutor` (retries non-`P2002/P2025/P2003` errors up to 2× with backoff, 30s timeout default).
+- **Bulk inserts:** `DbActionExecutor.addRangeAsync(delegate, items, createdBy, chunkSize?)` — batches inserts in chunks of 500 (default) via `createMany`. Returns `DbResult<number>` (total inserted count).
 - **Multi-entity writes:** `UnitOfWork` — wraps a Prisma `$transaction`. Enqueue `(tx) => tx.something(...)` callbacks, then `saveAsync()`.
-- **Primary keys:** UUIDv7 generated by `DbActionExecutor.addAsync` (consumer's Prisma schema must declare `id String @id` without `@default(uuid())`).
+- **Primary keys:** UUIDv7 generated by `DbActionExecutor.addAsync` / `addRangeAsync` (consumer's Prisma schema must declare `id String @id` without `@default(uuid())`).
+- **getByIdAsync:** filters `isDeleted: false` by default (uses `findFirst`). Pass `{ includeDeleted: true }` to read soft-deleted records.
 - **Validation errors:** push via `errors.add(code, message, field?)` — first error wins for HTTP status mapping.
 - **DB results:** check `dbResult.isSuccess` before reading `.data`; on failure read `.error.code` (Prisma codes pass through).
 - **HTTP responses:** `successResponse(data, traceId)` / `failResponse(errors, traceId)` — already wrapped by `createBaseController`.
-- **Cache:** `CacheStore<TKey, TModel>` with TTL for read-heavy master data. `PermissionCache` for role→permission lookup (TTL 5 min default). Invalidate from `onChanged()`.
+- **Cache:** `CacheStore<TKey, TModel>` implements `ICacheStore<TKey, TModel>`. Single-flight prevents duplicate concurrent loads. `invalidate(key)` does NOT invalidate the `getAll` snapshot — only `invalidateAll()` does. `PermissionCache` for role→permission lookup (TTL 5 min default). Invalidate from `onChanged()`.
 
 ## Build & Run
 
