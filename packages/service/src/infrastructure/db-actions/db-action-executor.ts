@@ -4,6 +4,19 @@ import type { PrismaDelegate } from './prisma-delegate';
 
 const NON_RETRYABLE_CODES = new Set(['P2002', 'P2025', 'P2003']);
 
+/** PII fix: map known Prisma error codes to safe generic messages.
+ *  Raw Prisma message (which may contain table/column names, query fragments,
+ *  or input values) is preserved on `originalError` only — never on `message`. */
+const PRISMA_SAFE_MESSAGES: Record<string, string> = {
+  P2002: 'Bản ghi đã tồn tại.',
+  P2003: 'Vi phạm ràng buộc khoá ngoại.',
+  P2025: 'Không tìm thấy bản ghi.',
+  P1001: 'Không thể kết nối cơ sở dữ liệu.',
+  P1002: 'Không thể kết nối cơ sở dữ liệu.',
+  P1008: 'Thao tác cơ sở dữ liệu quá hạn.',
+  P1017: 'Không thể kết nối cơ sở dữ liệu.',
+};
+
 export interface DbActionOptions {
   retries?: number;
   timeoutMs?: number;
@@ -89,6 +102,12 @@ export class DbActionExecutor {
     return this.withRetry(() => delegate.findFirst({ where: { id, isDeleted: false } }));
   }
 
+  /**
+   * Bulk insert in chunks of `chunkSize` rows per `createMany` call.
+   * Each chunk is its own statement; chunks are sequential, NOT wrapped in a single transaction —
+   * a partial failure leaves earlier chunks committed. Lock hold is per-chunk only, so this is
+   * safe for very large batches (e.g. >10k rows). Wrap in `UnitOfWork` if you need atomicity.
+   */
   async addRangeAsync<T>(
     delegate: PrismaDelegate<T>,
     items: Record<string, unknown>[],
@@ -159,11 +178,12 @@ export class DbActionExecutor {
 
   private toDbError(err: unknown): DbError {
     if (err instanceof Error && err.message === 'DB_TIMEOUT') {
-      return { code: 'DB_TIMEOUT', message: 'Database operation timed out.', originalError: err };
+      return { code: 'DB_TIMEOUT', message: 'Thao tác cơ sở dữ liệu quá hạn.', originalError: err };
     }
     if (this.isPrismaError(err)) {
-      return { code: err.code, message: err.message, originalError: err };
+      const safeMessage = PRISMA_SAFE_MESSAGES[err.code] ?? 'Lỗi cơ sở dữ liệu.';
+      return { code: err.code, message: safeMessage, originalError: err };
     }
-    return { code: 'UNKNOWN', message: String(err), originalError: err };
+    return { code: 'UNKNOWN', message: 'Lỗi cơ sở dữ liệu.', originalError: err };
   }
 }

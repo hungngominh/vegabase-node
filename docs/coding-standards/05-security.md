@@ -21,11 +21,13 @@ async exportCsv(p: UserParam): Promise<Result<string>> {
   // ...
 }
 
-// ❌ Sai: hardcode role string
+// ❌ Sai: hardcode role string trong consumer code
 if (param.callerRoles.includes('admin')) { /* allow */ }
 ```
 
 > `BaseService` hiện check role đầu tiên (`callerRoles[0]`). Khi cần multi-role check, viết Service method custom — không sửa `BaseService`.
+
+> **Thứ tự kiểm tra trong `isAllowed()` (V1):** Admin bypass (`callerRoles` chứa `"admin"` case-insensitive) được kiểm tra **trước** `screenCode` guard. Admin luôn được phép kể cả khi `screenCode` chưa cấu hình. `screenCode` rỗng chỉ block non-admin và log error. Đây là framework-internal — consumer code KHÔNG tự viết logic admin bypass.
 
 ---
 

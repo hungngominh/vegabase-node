@@ -22,6 +22,13 @@ export class Argon2idHasher implements PasswordHasher {
   }
 
   async verify(password: string, hash: string): Promise<boolean> {
-    return argon2.verify(hash, password);
+    try {
+      return await argon2.verify(hash, password);
+    } catch {
+      // Malformed/legacy hash, OOM, or crypto error — operationally indistinguishable
+      // from "wrong password" to the caller. Returning false preserves SEC-05 (no leaks
+      // about hash internals) and avoids 500s from corrupt rows in the user table.
+      return false;
+    }
   }
 }

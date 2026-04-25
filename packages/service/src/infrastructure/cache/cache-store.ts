@@ -60,6 +60,10 @@ export class CacheStore<TKey, TModel> implements ICacheStore<TKey, TModel> {
     this.allInflight = loader()
       .then(data => {
         this.allInflight = null;
+        // Don't cache an empty result without a TTL — would permanently lock out future
+        // reloads when the underlying table is later populated. Caller can still force
+        // reload via invalidateAll() if needed.
+        if (data.length === 0 && this.ttlMs === null) return data;
         this.allEntry = { data, expiresAt: this.ttlMs ? Date.now() + this.ttlMs : null };
         return data;
       })
