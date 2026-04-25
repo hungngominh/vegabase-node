@@ -58,7 +58,7 @@ function makePermissions(hasPermission = true): PermissionCache {
 }
 
 function makeParam(overrides: Partial<UserParam> = {}): UserParam {
-  return { callerUsername: 'user', callerRoles: ['ADMIN'], ...overrides };
+  return { callerUsername: 'user', callerRoles: ['manager'], ...overrides };
 }
 
 function makeEntity(overrides: Partial<UserEntity> = {}): UserEntity {
@@ -71,6 +71,17 @@ describe('BaseService.add', () => {
     const result = await svc.add(makeParam());
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.errors[0].code).toBe('PERMISSION_DENIED');
+  });
+
+  it('add_adminRole_bypassesPermissionCheck', async () => {
+    const executor = makeExecutor();
+    const entity = makeEntity();
+    vi.mocked(executor.addAsync).mockResolvedValue(dbSuccess(entity, 5));
+    const svc = new TestUserService(executor, makePermissions(false));
+
+    const result = await svc.add(makeParam({ callerRoles: ['Admin'] }));
+
+    expect(result.ok).toBe(true);
   });
 
   it('add_validParam_callsExecutorAddAsync', async () => {

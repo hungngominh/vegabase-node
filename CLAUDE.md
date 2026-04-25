@@ -158,6 +158,7 @@ Workspace deps (`"@vegabase/core": "workspace:*"`) are rewritten by pnpm to a re
 | `JWT_SECRET` | Yes | — |
 | `JWT_ISSUER` | No | — |
 | `JWT_AUDIENCE` | No | — |
+| `JWT_CLOCK_SKEW_SECONDS` | No | `30` (clamped to 0–300) — clock-drift tolerance for `iat`/`exp`/`nbf` |
 | `DATABASE_URL` | Yes | — |
 
 > Token issuance and expiry are the consumer's responsibility — `@vegabase/api` only verifies tokens at the `onRequest` hook.

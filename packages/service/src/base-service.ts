@@ -22,9 +22,19 @@ export abstract class BaseService<TModel extends BaseEntity, TParam extends Base
     protected readonly logger: Logger = noopLogger,
   ) {}
 
+  /** V1: admin bypass is checked first, before screenCode guard, then hasPermission. */
+  private async isAllowed(callerRoles: string[], action: string): Promise<boolean> {
+    if (callerRoles.some(r => r.toLowerCase() === 'admin')) return true;
+    if (!this.screenCode) {
+      this.logger.error('[BaseService] screenCode is empty — all non-admin requests denied (service misconfigured)');
+      return false;
+    }
+    return this.permissions.hasPermission(callerRoles[0] ?? '', this.screenCode, action);
+  }
+
   async getList(param: TParam): Promise<Result<PagedResult<TModel>>> {
-    const allowed = await this.permissions.hasPermission(param.callerRoles[0] ?? '', this.screenCode, 'READ');
-    if (!allowed) return fail([{ code: 'PERMISSION_DENIED', message: 'Access denied.' }]);
+    if (!await this.isAllowed(param.callerRoles, 'READ'))
+      return fail([{ code: 'PERMISSION_DENIED', message: 'Access denied.' }]);
 
     const where = this.applyFilter({}, param);
     const page = Math.max(1, param.page ?? 1);
@@ -50,8 +60,8 @@ export abstract class BaseService<TModel extends BaseEntity, TParam extends Base
   }
 
   async add(param: TParam): Promise<Result<TModel>> {
-    const allowed = await this.permissions.hasPermission(param.callerRoles[0] ?? '', this.screenCode, 'CREATE');
-    if (!allowed) return fail([{ code: 'PERMISSION_DENIED', message: 'Access denied.' }]);
+    if (!await this.isAllowed(param.callerRoles, 'CREATE'))
+      return fail([{ code: 'PERMISSION_DENIED', message: 'Access denied.' }]);
 
     const errors = new Errors();
     await this.checkAddCondition(param, errors);
@@ -71,8 +81,8 @@ export abstract class BaseService<TModel extends BaseEntity, TParam extends Base
   async updateField(param: TParam): Promise<Result<TModel>> {
     if (!param.id) return fail([{ code: 'VALIDATION', message: 'id is required.', field: 'id' }]);
 
-    const allowed = await this.permissions.hasPermission(param.callerRoles[0] ?? '', this.screenCode, 'UPDATE');
-    if (!allowed) return fail([{ code: 'PERMISSION_DENIED', message: 'Access denied.' }]);
+    if (!await this.isAllowed(param.callerRoles, 'UPDATE'))
+      return fail([{ code: 'PERMISSION_DENIED', message: 'Access denied.' }]);
 
     const entityResult = await this.executor.getByIdAsync(this.delegate, param.id);
     if (!entityResult.isSuccess) return fail([{ code: 'DB_TIMEOUT', message: entityResult.error.message }]);
@@ -83,7 +93,12 @@ export abstract class BaseService<TModel extends BaseEntity, TParam extends Base
     if (errors.hasErrors()) return errors.toResult();
 
     const entity = entityResult.data;
-    this.applyUpdate(entity, param);
+    try {
+      this.applyUpdate(entity, param);
+    } catch (err) {
+      this.logger.error('[BaseService] applyUpdate threw — entity not persisted', err);
+      return fail([{ code: 'UNKNOWN', message: 'Update failed.' }]);
+    }
 
     const data: Record<string, unknown> = {};
     for (const field of this.allowedUpdateFields) {
@@ -107,8 +122,8 @@ export abstract class BaseService<TModel extends BaseEntity, TParam extends Base
   async delete(param: TParam): Promise<Result<boolean>> {
     if (!param.id) return fail([{ code: 'VALIDATION', message: 'id is required.', field: 'id' }]);
 
-    const allowed = await this.permissions.hasPermission(param.callerRoles[0] ?? '', this.screenCode, 'DELETE');
-    if (!allowed) return fail([{ code: 'PERMISSION_DENIED', message: 'Access denied.' }]);
+    if (!await this.isAllowed(param.callerRoles, 'DELETE'))
+      return fail([{ code: 'PERMISSION_DENIED', message: 'Access denied.' }]);
 
     const entityResult = await this.executor.getByIdAsync(this.delegate, param.id);
     if (!entityResult.isSuccess) return fail([{ code: 'DB_TIMEOUT', message: entityResult.error.message }]);
